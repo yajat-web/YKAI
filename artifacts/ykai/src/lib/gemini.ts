@@ -31,11 +31,9 @@ export function isRateLimitError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   return (
     msg.includes('RESOURCE_EXHAUSTED') ||
-    msg.includes('quota') ||
-    msg.includes('429') ||
     msg.includes('Too Many Requests') ||
-    msg.includes('rate limit') ||
-    msg.includes('rateLimitExceeded')
+    msg.includes('rateLimitExceeded') ||
+    /\b429\b/.test(msg)
   );
 }
 

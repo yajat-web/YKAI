@@ -9,7 +9,7 @@ import { useLocation } from 'wouter';
 
 type ChatStatus = 'idle' | 'sending' | 'retrying' | 'cooldown';
 
-const COOLDOWN_SECONDS = 30;
+const COOLDOWN_SECONDS = 3;
 
 export default function Chat() {
   const { activeMode, messages, addMessage, updateLastMessage, settings } = useAppContext();
@@ -143,7 +143,6 @@ export default function Chat() {
 
       for await (const chunk of stream) {
         if (abortRef.current) break;
-        if (chatStatus !== 'sending') setChatStatus('sending');
         accumulated += chunk;
         updateLastMessage(accumulated);
       }
@@ -151,6 +150,9 @@ export default function Chat() {
       if (!accumulated.trim()) {
         updateLastMessage('No response received. Please try again.');
       }
+
+      // Successful response — clear any lingering error state
+      setError(null);
     } catch (err: unknown) {
       if (isRateLimitError(err)) {
         setError('Rate limit exhausted after retries. Neural systems cooling down...');
