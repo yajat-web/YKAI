@@ -115,7 +115,7 @@ export default function Chat() {
             <div className="flex items-center gap-2">
               <div className={`w-1.5 h-1.5 rounded-full ${settings.geminiApiKey ? 'bg-primary animate-pulse' : 'bg-yellow-500'}`} />
               <span className="text-xs text-muted-foreground font-mono uppercase tracking-widest">
-                {isStreaming ? 'Generating...' : settings.geminiApiKey ? 'Gemini 2.0 Flash — Live' : 'No API Key — Demo Mode'}
+                {isStreaming ? 'Generating...' : settings.geminiApiKey ? 'Gemini 1.5 Flash — Live' : 'No API Key — Demo Mode'}
               </span>
             </div>
           </div>
@@ -227,7 +227,7 @@ export default function Chat() {
           </Button>
         </form>
         <p className="text-[10px] font-mono text-muted-foreground/40 mt-2 text-center uppercase tracking-widest">
-          {settings.geminiApiKey ? 'Gemini 2.0 Flash · End-to-end encrypted' : 'Add Gemini API key in Settings for live AI'}
+          {settings.geminiApiKey ? 'Gemini 1.5 Flash · End-to-end encrypted' : 'Add Gemini API key in Settings for live AI'}
         </p>
       </div>
 
