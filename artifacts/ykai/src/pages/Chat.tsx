@@ -1,62 +1,124 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useAppContext } from '@/lib/AppContext';
+import { streamGeminiResponse, buildSystemPrompt, GeminiChatMessage } from '@/lib/gemini';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Terminal } from 'lucide-react';
+import { Send, Terminal, AlertTriangle, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-
-const TYPING_RESPONSES = [
-  "Analyzing request...",
-  "Neural systems online. Processing your query.",
-  "Query resolved. What else can I help you with?",
-  "Scanning knowledge banks... complete.",
-  "YKAI processing complete. Here's what I found:",
-  "Running inference protocols... response ready.",
-  "Data synchronized. Here is your answer.",
-  "Neural pathways engaged. Processing..."
-];
+import { useLocation } from 'wouter';
 
 export default function Chat() {
-  const { activeMode, messages, addMessage } = useAppContext();
+  const { activeMode, messages, addMessage, updateLastMessage, settings } = useAppContext();
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<boolean>(false);
+  const [, setLocation] = useLocation();
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isTyping]);
 
-  const handleSend = (e?: React.FormEvent) => {
-    e?.preventDefault();
-    if (!input.trim() || isTyping) return;
+  const buildHistory = useCallback((): GeminiChatMessage[] => {
+    return messages
+      .filter(m => m.id !== 'welcome')
+      .map(m => ({
+        role: m.sender === 'user' ? 'user' : 'model',
+        parts: [{ text: m.text }],
+      }));
+  }, [messages]);
 
+  const handleSend = useCallback(async (e?: React.FormEvent) => {
+    e?.preventDefault();
     const userText = input.trim();
+    if (!userText || isTyping) return;
+
     setInput('');
-    
+    setError(null);
+
     addMessage({
       id: Date.now().toString(),
       text: userText,
       sender: 'user',
-      timestamp: new Date()
+      timestamp: new Date(),
     });
 
     setIsTyping(true);
+    abortRef.current = false;
 
-    setTimeout(() => {
-      setIsTyping(false);
-      const randomResponse = TYPING_RESPONSES[Math.floor(Math.random() * TYPING_RESPONSES.length)];
+    if (!settings.geminiApiKey) {
+      setTimeout(() => {
+        setIsTyping(false);
+        addMessage({
+          id: (Date.now() + 1).toString(),
+          text: `No API key configured. Navigate to Settings and enter your Gemini API key to enable real AI responses.`,
+          sender: 'ykai',
+          timestamp: new Date(),
+        });
+      }, 800);
+      return;
+    }
+
+    const historyBeforeUserMsg = buildHistory();
+    const systemPrompt = buildSystemPrompt(activeMode.id, settings.personality);
+
+    const placeholderId = (Date.now() + 1).toString();
+    let accumulated = '';
+
+    try {
       addMessage({
-        id: (Date.now() + 1).toString(),
-        text: `${randomResponse} I have analyzed "${userText.slice(0, 20)}${userText.length > 20 ? '...' : ''}" through the ${activeMode.name} matrix. The optimal path forward is clear. Proceed with execution.`,
+        id: placeholderId,
+        text: '',
         sender: 'ykai',
-        timestamp: new Date()
+        timestamp: new Date(),
       });
-    }, 2000);
+      setIsTyping(false);
+
+      const stream = streamGeminiResponse(
+        settings.geminiApiKey,
+        historyBeforeUserMsg,
+        userText,
+        systemPrompt
+      );
+
+      for await (const chunk of stream) {
+        if (abortRef.current) break;
+        accumulated += chunk;
+        updateLastMessage(accumulated);
+      }
+
+      if (!accumulated.trim()) {
+        updateLastMessage('No response received. Please try again.');
+      }
+    } catch (err: unknown) {
+      setIsTyping(false);
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      if (msg.includes('API_KEY_INVALID') || msg.includes('invalid')) {
+        setError('Invalid API key. Check your Gemini API key in Settings.');
+        updateLastMessage('Authentication failed. Please verify your API key in Settings.');
+      } else if (msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED')) {
+        setError('API quota exceeded. Try again later.');
+        updateLastMessage('Rate limit reached. Please wait a moment and try again.');
+      } else {
+        setError(msg);
+        updateLastMessage(`Error: ${msg}`);
+      }
+    } finally {
+      setIsTyping(false);
+    }
+  }, [input, isTyping, settings.geminiApiKey, settings.personality, activeMode, addMessage, updateLastMessage, buildHistory]);
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
   };
 
   return (
     <div className="flex flex-col h-[calc(100vh-6rem)] max-w-4xl mx-auto">
-      
+
       {/* Header */}
       <div className="glass-panel p-4 rounded-t-xl border-b-0 flex items-center justify-between mb-0">
         <div className="flex items-center gap-3">
@@ -66,15 +128,45 @@ export default function Chat() {
           <div>
             <h2 className="font-display font-semibold tracking-wide text-primary neon-text">{activeMode.name}</h2>
             <div className="flex items-center gap-2">
-              <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-              <span className="text-xs text-muted-foreground font-mono uppercase tracking-widest">Active</span>
+              <div className={`w-1.5 h-1.5 rounded-full ${settings.geminiApiKey ? 'bg-primary animate-pulse' : 'bg-yellow-500'}`} />
+              <span className="text-xs text-muted-foreground font-mono uppercase tracking-widest">
+                {settings.geminiApiKey ? 'Gemini 1.5 Flash — Live' : 'No API Key — Demo Mode'}
+              </span>
             </div>
           </div>
         </div>
+        {!settings.geminiApiKey && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setLocation('/settings')}
+            className="text-yellow-400 border border-yellow-400/30 hover:bg-yellow-400/10 font-mono text-xs uppercase tracking-wider gap-1.5"
+            data-testid="button-configure-api"
+          >
+            <Settings className="w-3.5 h-3.5" />
+            Configure API
+          </Button>
+        )}
       </div>
 
+      {/* Error Banner */}
+      <AnimatePresence>
+        {error && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="bg-red-900/30 border-x border-red-500/30 px-4 py-2 flex items-center gap-2"
+          >
+            <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+            <span className="text-xs font-mono text-red-300">{error}</span>
+            <button onClick={() => setError(null)} className="ml-auto text-red-400 hover:text-red-300 text-xs font-mono">Dismiss</button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Chat Area */}
-      <div className="flex-1 glass-panel border-y-0 overflow-y-auto p-6 space-y-6">
+      <div className="flex-1 glass-panel border-y-0 overflow-y-auto p-4 sm:p-6 space-y-6">
         <AnimatePresence initial={false}>
           {messages.map((msg) => (
             <motion.div
@@ -92,22 +184,30 @@ export default function Chat() {
                 </span>
               </div>
               <div
-                className={`max-w-[80%] p-4 rounded-xl font-mono text-sm leading-relaxed ${
+                className={`max-w-[85%] sm:max-w-[80%] p-4 rounded-xl font-mono text-sm leading-relaxed whitespace-pre-wrap ${
                   msg.sender === 'user'
                     ? 'bg-primary/20 border border-primary/30 text-primary-foreground ml-4'
                     : 'bg-secondary border border-white/5 text-foreground mr-4'
                 }`}
                 style={msg.sender === 'user' ? { boxShadow: 'inset 0 0 15px rgba(0,255,255,0.05)' } : {}}
               >
-                {msg.text}
+                {msg.text || (
+                  <span className="inline-flex items-center gap-1.5">
+                    <motion.span className="w-1.5 h-1.5 rounded-full bg-primary inline-block" animate={{ opacity: [0.3, 1, 0.3] }} transition={{ repeat: Infinity, duration: 1, delay: 0 }} />
+                    <motion.span className="w-1.5 h-1.5 rounded-full bg-primary inline-block" animate={{ opacity: [0.3, 1, 0.3] }} transition={{ repeat: Infinity, duration: 1, delay: 0.2 }} />
+                    <motion.span className="w-1.5 h-1.5 rounded-full bg-primary inline-block" animate={{ opacity: [0.3, 1, 0.3] }} transition={{ repeat: Infinity, duration: 1, delay: 0.4 }} />
+                  </span>
+                )}
               </div>
             </motion.div>
           ))}
-          
+
           {isTyping && (
             <motion.div
+              key="typing"
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
               className="flex flex-col items-start"
             >
               <div className="flex items-center gap-2 mb-1 px-1">
@@ -131,20 +231,31 @@ export default function Chat() {
           <Input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={`Awaiting input for ${activeMode.name}...`}
-            className="w-full bg-background/50 border-white/10 text-foreground h-14 pl-4 pr-16 rounded-lg font-mono text-sm focus-visible:ring-primary focus-visible:border-primary transition-all duration-300 neon-border-focus"
+            onKeyDown={handleKeyDown}
+            placeholder={
+              isTyping
+                ? 'YKAI is processing...'
+                : settings.geminiApiKey
+                  ? `Message ${activeMode.name}...`
+                  : `Demo mode — configure API key in Settings...`
+            }
+            disabled={isTyping}
+            className="w-full bg-background/50 border-white/10 text-foreground h-14 pl-4 pr-16 rounded-lg font-mono text-sm focus-visible:ring-primary focus-visible:border-primary transition-all duration-300 neon-border-focus disabled:opacity-60"
             data-testid="input-chat"
           />
-          <Button 
-            type="submit" 
-            size="icon" 
+          <Button
+            type="submit"
+            size="icon"
             disabled={!input.trim() || isTyping}
-            className="absolute right-2 bg-primary/20 hover:bg-primary/40 text-primary border border-primary/50 neon-border h-10 w-10"
+            className="absolute right-2 bg-primary/20 hover:bg-primary/40 text-primary border border-primary/50 neon-border h-10 w-10 transition-all duration-200"
             data-testid="button-send-chat"
           >
             <Send className="w-4 h-4" />
           </Button>
         </form>
+        <p className="text-[10px] font-mono text-muted-foreground/40 mt-2 text-center uppercase tracking-widest">
+          {settings.geminiApiKey ? 'Gemini 1.5 Flash · End-to-end encrypted' : 'Add Gemini API key in Settings for live AI'}
+        </p>
       </div>
 
     </div>

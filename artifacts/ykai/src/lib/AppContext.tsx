@@ -14,18 +14,22 @@ export type Message = {
   timestamp: Date;
 };
 
+type Settings = {
+  theme: 'dark' | 'light';
+  personality: string;
+  soundEffects: boolean;
+  animations: boolean;
+  geminiApiKey: string;
+};
+
 type AppState = {
   activeMode: AIMode;
   setActiveMode: (mode: AIMode) => void;
   messages: Message[];
   addMessage: (msg: Message) => void;
-  settings: {
-    theme: 'dark' | 'light';
-    personality: string;
-    soundEffects: boolean;
-    animations: boolean;
-  };
-  updateSettings: (settings: Partial<AppState['settings']>) => void;
+  updateLastMessage: (text: string) => void;
+  settings: Settings;
+  updateSettings: (settings: Partial<Settings>) => void;
 };
 
 const DEFAULT_MODE: AIMode = {
@@ -34,6 +38,24 @@ const DEFAULT_MODE: AIMode = {
   description: 'All-purpose neural assistant',
   icon: 'Brain'
 };
+
+const DEFAULT_SETTINGS: Settings = {
+  theme: 'dark',
+  personality: 'Professional',
+  soundEffects: true,
+  animations: true,
+  geminiApiKey: '',
+};
+
+function loadSettings(): Settings {
+  try {
+    const raw = localStorage.getItem('ykai-settings');
+    if (raw) return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+  } catch {
+    // ignore
+  }
+  return DEFAULT_SETTINGS;
+}
 
 const AppContext = createContext<AppState | null>(null);
 
@@ -47,19 +69,32 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       timestamp: new Date()
     }
   ]);
-  const [settings, setSettings] = useState({
-    theme: 'dark' as const,
-    personality: 'Professional',
-    soundEffects: true,
-    animations: true
-  });
+  const [settings, setSettings] = useState<Settings>(loadSettings);
 
   const addMessage = (msg: Message) => {
     setMessages(prev => [...prev, msg]);
   };
 
-  const updateSettings = (newSettings: Partial<typeof settings>) => {
-    setSettings(prev => ({ ...prev, ...newSettings }));
+  const updateLastMessage = (text: string) => {
+    setMessages(prev => {
+      const updated = [...prev];
+      if (updated.length > 0) {
+        updated[updated.length - 1] = { ...updated[updated.length - 1], text };
+      }
+      return updated;
+    });
+  };
+
+  const updateSettings = (newSettings: Partial<Settings>) => {
+    setSettings(prev => {
+      const merged = { ...prev, ...newSettings };
+      try {
+        localStorage.setItem('ykai-settings', JSON.stringify(merged));
+      } catch {
+        // ignore
+      }
+      return merged;
+    });
   };
 
   useEffect(() => {
@@ -68,7 +103,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     } else {
       document.documentElement.classList.remove('dark');
     }
-
     if (!settings.animations) {
       document.body.classList.add('no-animations');
     } else {
@@ -82,6 +116,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       setActiveMode,
       messages,
       addMessage,
+      updateLastMessage,
       settings,
       updateSettings
     }}>
