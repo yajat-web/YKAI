@@ -115,7 +115,7 @@ export default function Chat() {
             <div className="flex items-center gap-2">
               <div className={`w-1.5 h-1.5 rounded-full ${settings.geminiApiKey ? 'bg-primary animate-pulse' : 'bg-yellow-500'}`} />
               <span className="text-xs text-muted-foreground font-mono uppercase tracking-widest">
-                {isStreaming ? 'Generating...' : settings.geminiApiKey ? 'Gemini 1.5 Flash — Live' : 'No API Key — Demo Mode'}
+                {isStreaming ? 'Generating...' : settings.geminiApiKey ? 'YKAI - FUTURISTIC AI' : 'No API Key — Demo Mode'}
               </span>
             </div>
           </div>

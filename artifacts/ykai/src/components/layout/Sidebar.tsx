@@ -42,7 +42,7 @@ export const Sidebar = () => {
                 YKAI
               </h1>
               <p className="text-xs font-mono text-muted-foreground mt-1 uppercase tracking-widest opacity-60">
-                Core OS v3.1
+                developed by yajat khatri
               </p>
             </div>
 
