@@ -1,0 +1,94 @@
+Create a COMPLETE futuristic AI assistant web app called “YKAI” created by Yajat Khatri.
+
+STYLE:
+- Ultra futuristic cyberpunk operating system UI
+- Dark navy/black background
+- Neon cyan + electric blue glow accents
+- Glassmorphism panels
+- Premium AI dashboard aesthetic
+- Smooth animations and transitions
+- Responsive for desktop and mobile
+- Modern typography
+- Looks like ChatGPT + Jarvis + Iron Man OS combined
+
+TECH:
+- Build with React + Vite
+- Use modern clean component structure
+- Fully functional frontend
+- No placeholder broken buttons
+- Everything interactive
+
+FEATURES:
+1. Functional sidebar navigation
+   - Home
+   - AI Chat
+   - AI Modes
+   - Image Analysis
+   - Settings
+
+2. REAL WORKING CHAT INTERFACE
+   - User can type messages
+   - Send button works
+   - Messages appear in chat bubbles
+   - AI fake responses initially
+   - Typing animation
+   - Auto scroll to latest message
+
+3. AI MODES PAGE
+   Cards for:
+   - General AI
+   - Coding Assistant
+   - Trading Mentor
+   - Fitness Coach
+   - Study Assistant
+   - Motivation Mode
+
+   Clicking a mode changes assistant personality label in chat.
+
+4. IMAGE ANALYSIS PAGE
+   - Upload image button
+   - Image preview
+   - Fake AI analysis result
+   - Futuristic scanning animation
+
+5. SETTINGS PAGE
+   - Theme toggle
+   - AI personality selector
+   - Sound effects toggle
+   - Animation toggle
+
+6. HOMEPAGE
+   - Massive glowing YKAI logo
+   - Hero section
+   - Animated background grid
+   - “Launch YKAI” button
+   - Smooth scroll animations
+   - Futuristic stats cards
+   - AI core visualization
+
+7. EXTRA EFFECTS
+   - Cursor glow effect
+   - Hover animations
+   - Neon borders
+   - Glass cards
+   - Loading screen
+   - Smooth transitions
+   - Animated typing dots
+   - Animated sidebar
+
+8. CHAT EXPERIENCE
+   Fake intelligent responses like:
+   - “Analyzing request…”
+   - “Neural systems online.”
+   - “Processing complete.”
+   - “Image scan successful.”
+
+9. IMPORTANT
+   - ALL buttons must work
+   - ALL navigation must work
+   - No dead UI
+   - No placeholder pages
+   - Complete polished experience
+
+10. FINAL GOAL
+The app should feel like a real premium next-generation AI operating system prototype ready for future Gemini/OpenAI API integration.
