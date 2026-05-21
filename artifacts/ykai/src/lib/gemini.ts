@@ -27,22 +27,7 @@ export function buildSystemPrompt(modeId: string, personality: string): string {
   return `${modePrompt} ${personalityPrompt} Keep responses concise but complete. Do not use markdown formatting — respond in plain text.`;
 }
 
-export function isRateLimitError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  return (
-    msg.includes('RESOURCE_EXHAUSTED') ||
-    msg.includes('Too Many Requests') ||
-    msg.includes('rateLimitExceeded') ||
-    /\b429\b/.test(msg)
-  );
-}
-
-export function isAuthError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  return msg.includes('API_KEY_INVALID') || msg.includes('UNAUTHENTICATED') || msg.includes('invalid') && msg.includes('key');
-}
-
-async function* streamOnce(
+export async function* streamGeminiResponse(
   apiKey: string,
   history: GeminiChatMessage[],
   userMessage: string,
@@ -58,34 +43,5 @@ async function* streamOnce(
   for await (const chunk of result.stream) {
     const text = chunk.text();
     if (text) yield text;
-  }
-}
-
-export type RetryCallback = (attempt: number, totalAttempts: number, delayMs: number) => void;
-
-export async function* streamGeminiResponseWithRetry(
-  apiKey: string,
-  history: GeminiChatMessage[],
-  userMessage: string,
-  systemPrompt: string,
-  onRetry?: RetryCallback,
-  maxRetries = 3
-): AsyncGenerator<string> {
-  let attempt = 0;
-
-  while (true) {
-    try {
-      yield* streamOnce(apiKey, history, userMessage, systemPrompt);
-      return;
-    } catch (err) {
-      if (isRateLimitError(err) && attempt < maxRetries) {
-        attempt++;
-        const delayMs = Math.pow(2, attempt) * 1000;
-        onRetry?.(attempt, maxRetries, delayMs);
-        await new Promise(resolve => setTimeout(resolve, delayMs));
-      } else {
-        throw err;
-      }
-    }
   }
 }

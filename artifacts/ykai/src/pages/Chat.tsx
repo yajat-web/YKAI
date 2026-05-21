@@ -1,78 +1,23 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useAppContext } from '@/lib/AppContext';
-import { streamGeminiResponseWithRetry, buildSystemPrompt, isRateLimitError, isAuthError, GeminiChatMessage } from '@/lib/gemini';
+import { streamGeminiResponse, buildSystemPrompt, GeminiChatMessage } from '@/lib/gemini';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Terminal, AlertTriangle, Settings, RefreshCw, Clock } from 'lucide-react';
+import { Send, Terminal, AlertTriangle, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useLocation } from 'wouter';
 
-type ChatStatus = 'idle' | 'sending' | 'retrying' | 'cooldown';
-
-const COOLDOWN_SECONDS = 3;
-
 export default function Chat() {
   const { activeMode, messages, addMessage, updateLastMessage, settings } = useAppContext();
   const [input, setInput] = useState('');
-  const [chatStatus, setChatStatus] = useState<ChatStatus>('idle');
-  const [retryAttempt, setRetryAttempt] = useState(0);
-  const [retryTotal, setRetryTotal] = useState(0);
-  const [retryDelaySecs, setRetryDelaySecs] = useState(0);
-  const [retryCountdown, setRetryCountdown] = useState(0);
-  const [cooldownSecs, setCooldownSecs] = useState(0);
+  const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const abortRef = useRef(false);
-  const cooldownStartedRef = useRef(false);
-  const cooldownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const retryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [, setLocation] = useLocation();
-
-  const isBusy = chatStatus !== 'idle';
-  const isBlocked = chatStatus === 'cooldown';
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, chatStatus]);
-
-  useEffect(() => {
-    return () => {
-      if (cooldownTimerRef.current) clearInterval(cooldownTimerRef.current);
-      if (retryTimerRef.current) clearInterval(retryTimerRef.current);
-    };
-  }, []);
-
-  const startCooldown = useCallback(() => {
-    setCooldownSecs(COOLDOWN_SECONDS);
-    setChatStatus('cooldown');
-    if (cooldownTimerRef.current) clearInterval(cooldownTimerRef.current);
-    cooldownTimerRef.current = setInterval(() => {
-      setCooldownSecs(prev => {
-        if (prev <= 1) {
-          clearInterval(cooldownTimerRef.current!);
-          setChatStatus('idle');
-          setError(null);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-  }, []);
-
-  const tickRetryCountdown = useCallback((delayMs: number) => {
-    if (retryTimerRef.current) clearInterval(retryTimerRef.current);
-    const total = Math.ceil(delayMs / 1000);
-    setRetryCountdown(total);
-    retryTimerRef.current = setInterval(() => {
-      setRetryCountdown(prev => {
-        if (prev <= 1) {
-          clearInterval(retryTimerRef.current!);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-  }, []);
+  }, [messages, isStreaming]);
 
   const buildHistory = useCallback((): GeminiChatMessage[] => {
     return messages
@@ -86,12 +31,10 @@ export default function Chat() {
   const handleSend = useCallback(async (e?: React.FormEvent) => {
     e?.preventDefault();
     const userText = input.trim();
-    if (!userText || isBusy || isBlocked) return;
+    if (!userText || isStreaming) return;
 
     setInput('');
     setError(null);
-    abortRef.current = false;
-    cooldownStartedRef.current = false;
 
     addMessage({
       id: Date.now().toString(),
@@ -100,18 +43,13 @@ export default function Chat() {
       timestamp: new Date(),
     });
 
-    setChatStatus('sending');
-
     if (!settings.geminiApiKey) {
-      setTimeout(() => {
-        setChatStatus('idle');
-        addMessage({
-          id: (Date.now() + 1).toString(),
-          text: 'No API key configured. Navigate to Settings and enter your Gemini API key to enable real AI responses.',
-          sender: 'ykai',
-          timestamp: new Date(),
-        });
-      }, 800);
+      addMessage({
+        id: (Date.now() + 1).toString(),
+        text: 'No API key configured. Go to Settings and enter your Gemini API key to enable real AI responses.',
+        sender: 'ykai',
+        timestamp: new Date(),
+      });
       return;
     }
 
@@ -126,23 +64,17 @@ export default function Chat() {
       timestamp: new Date(),
     });
 
+    setIsStreaming(true);
+
     try {
-      const stream = streamGeminiResponseWithRetry(
+      const stream = streamGeminiResponse(
         settings.geminiApiKey,
         historyBeforeUserMsg,
         userText,
-        systemPrompt,
-        (attempt, total, delayMs) => {
-          setRetryAttempt(attempt);
-          setRetryTotal(total);
-          setRetryDelaySecs(Math.ceil(delayMs / 1000));
-          setChatStatus('retrying');
-          tickRetryCountdown(delayMs);
-        }
+        systemPrompt
       );
 
       for await (const chunk of stream) {
-        if (abortRef.current) break;
         accumulated += chunk;
         updateLastMessage(accumulated);
       }
@@ -151,27 +83,16 @@ export default function Chat() {
         updateLastMessage('No response received. Please try again.');
       }
 
-      // Successful response — clear any lingering error state
-      setError(null);
+      console.log('[YKAI] Gemini response complete, length:', accumulated.length);
     } catch (err: unknown) {
-      if (isRateLimitError(err)) {
-        setError('Rate limit exhausted after retries. Neural systems cooling down...');
-        updateLastMessage('Rate limit reached. Neural core cooling down — please wait before sending another message.');
-        cooldownStartedRef.current = true;
-        startCooldown();
-        return;
-      } else if (isAuthError(err)) {
-        setError('Invalid API key. Check your Gemini API key in Settings.');
-        updateLastMessage('Authentication failed. Please verify your API key in Settings.');
-      } else {
-        const msg = err instanceof Error ? err.message : 'Unknown error';
-        setError(msg);
-        updateLastMessage(`Neural error: ${msg}`);
-      }
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[YKAI] Gemini error:', msg);
+      setError(msg);
+      updateLastMessage(`Error: ${msg}`);
     } finally {
-      if (!cooldownStartedRef.current) setChatStatus('idle');
+      setIsStreaming(false);
     }
-  }, [input, isBusy, isBlocked, settings.geminiApiKey, settings.personality, activeMode, addMessage, updateLastMessage, buildHistory, tickRetryCountdown, startCooldown]);
+  }, [input, isStreaming, settings.geminiApiKey, settings.personality, activeMode, addMessage, updateLastMessage, buildHistory]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -180,18 +101,11 @@ export default function Chat() {
     }
   };
 
-  const statusLabel = () => {
-    if (chatStatus === 'retrying') return `Retry ${retryAttempt}/${retryTotal} — waiting ${retryCountdown}s...`;
-    if (chatStatus === 'cooldown') return `Neural cooling... ${cooldownSecs}s`;
-    if (chatStatus === 'sending') return 'YKAI is processing...';
-    return settings.geminiApiKey ? `Message ${activeMode.name}...` : 'Demo mode — configure API key in Settings...';
-  };
-
   return (
     <div className="flex flex-col h-[calc(100vh-6rem)] max-w-4xl mx-auto">
 
       {/* Header */}
-      <div className="glass-panel p-4 rounded-t-xl border-b-0 flex items-center justify-between mb-0">
+      <div className="glass-panel p-4 rounded-t-xl border-b-0 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-primary/10 border border-primary/30 flex items-center justify-center neon-border">
             <Terminal className="w-5 h-5 text-primary" />
@@ -199,15 +113,9 @@ export default function Chat() {
           <div>
             <h2 className="font-display font-semibold tracking-wide text-primary neon-text">{activeMode.name}</h2>
             <div className="flex items-center gap-2">
-              <div className={`w-1.5 h-1.5 rounded-full ${
-                chatStatus === 'cooldown' ? 'bg-orange-400 animate-pulse' :
-                chatStatus === 'retrying' ? 'bg-yellow-400 animate-pulse' :
-                settings.geminiApiKey ? 'bg-primary animate-pulse' : 'bg-yellow-500'
-              }`} />
+              <div className={`w-1.5 h-1.5 rounded-full ${settings.geminiApiKey ? 'bg-primary animate-pulse' : 'bg-yellow-500'}`} />
               <span className="text-xs text-muted-foreground font-mono uppercase tracking-widest">
-                {chatStatus === 'cooldown' ? 'Rate Limited — Cooling' :
-                 chatStatus === 'retrying' ? 'Retrying Connection' :
-                 settings.geminiApiKey ? 'Gemini 2.0 Flash — Live' : 'No API Key — Demo Mode'}
+                {isStreaming ? 'Generating...' : settings.geminiApiKey ? 'Gemini 2.0 Flash — Live' : 'No API Key — Demo Mode'}
               </span>
             </div>
           </div>
@@ -226,80 +134,9 @@ export default function Chat() {
         )}
       </div>
 
-      {/* Status Banners */}
+      {/* Error Banner */}
       <AnimatePresence>
-        {/* Retry Banner */}
-        {chatStatus === 'retrying' && (
-          <motion.div
-            key="retry-banner"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            className="border-x border-yellow-500/30 bg-yellow-900/20 px-4 py-2.5 flex items-center gap-3"
-            data-testid="banner-retrying"
-          >
-            <motion.div
-              animate={{ rotate: 360 }}
-              transition={{ repeat: Infinity, duration: 1.2, ease: 'linear' }}
-            >
-              <RefreshCw className="w-3.5 h-3.5 text-yellow-400 shrink-0" />
-            </motion.div>
-            <span className="text-xs font-mono text-yellow-300 uppercase tracking-widest">
-              Rate limit detected — retry {retryAttempt}/{retryTotal}
-            </span>
-            <div className="ml-auto flex items-center gap-1.5">
-              <Clock className="w-3 h-3 text-yellow-400/70" />
-              <span className="text-xs font-mono text-yellow-400 tabular-nums">{retryCountdown}s</span>
-            </div>
-            {/* Countdown progress bar */}
-            <div className="absolute bottom-0 left-0 h-[2px] bg-yellow-500/20 w-full">
-              <motion.div
-                className="h-full bg-yellow-400"
-                initial={{ width: '100%' }}
-                animate={{ width: '0%' }}
-                transition={{ duration: retryDelaySecs, ease: 'linear' }}
-              />
-            </div>
-          </motion.div>
-        )}
-
-        {/* Cooldown Banner */}
-        {chatStatus === 'cooldown' && (
-          <motion.div
-            key="cooldown-banner"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            className="relative border-x border-orange-500/30 bg-orange-900/20 px-4 py-2.5 flex items-center gap-3 overflow-hidden"
-            data-testid="banner-cooldown"
-          >
-            <motion.div
-              animate={{ scale: [1, 1.2, 1] }}
-              transition={{ repeat: Infinity, duration: 1.5 }}
-            >
-              <AlertTriangle className="w-3.5 h-3.5 text-orange-400 shrink-0" />
-            </motion.div>
-            <span className="text-xs font-mono text-orange-300 uppercase tracking-widest">
-              Neural systems overloaded — rate limit exhausted
-            </span>
-            <div className="ml-auto flex items-center gap-1.5 shrink-0">
-              <Clock className="w-3 h-3 text-orange-400/70" />
-              <span className="text-xs font-mono text-orange-400 tabular-nums w-6 text-right">{cooldownSecs}s</span>
-            </div>
-            {/* Draining progress bar */}
-            <div className="absolute bottom-0 left-0 h-[2px] bg-orange-500/20 w-full">
-              <motion.div
-                className="h-full bg-orange-400"
-                initial={{ width: '100%' }}
-                animate={{ width: '0%' }}
-                transition={{ duration: COOLDOWN_SECONDS, ease: 'linear' }}
-              />
-            </div>
-          </motion.div>
-        )}
-
-        {/* Error Banner */}
-        {error && chatStatus === 'idle' && (
+        {error && (
           <motion.div
             key="error-banner"
             initial={{ opacity: 0, height: 0 }}
@@ -309,10 +146,10 @@ export default function Chat() {
             data-testid="banner-error"
           >
             <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
-            <span className="text-xs font-mono text-red-300">{error}</span>
+            <span className="text-xs font-mono text-red-300 break-all">{error}</span>
             <button
               onClick={() => setError(null)}
-              className="ml-auto text-red-400 hover:text-red-300 text-xs font-mono"
+              className="ml-auto text-red-400 hover:text-red-300 text-xs font-mono shrink-0"
               data-testid="button-dismiss-error"
             >
               Dismiss
@@ -368,49 +205,29 @@ export default function Chat() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={statusLabel()}
-            disabled={isBusy || isBlocked}
-            className={`w-full bg-background/50 text-foreground h-14 pl-4 pr-16 rounded-lg font-mono text-sm transition-all duration-300 neon-border-focus disabled:opacity-60 ${
-              chatStatus === 'cooldown'
-                ? 'border-orange-500/40 focus-visible:ring-orange-500'
-                : chatStatus === 'retrying'
-                ? 'border-yellow-500/40 focus-visible:ring-yellow-500'
-                : 'border-white/10 focus-visible:ring-primary focus-visible:border-primary'
-            }`}
+            placeholder={
+              isStreaming
+                ? 'YKAI is generating...'
+                : settings.geminiApiKey
+                  ? `Message ${activeMode.name}...`
+                  : 'Configure API key in Settings to enable AI...'
+            }
+            disabled={isStreaming}
+            className="w-full bg-background/50 border-white/10 text-foreground h-14 pl-4 pr-16 rounded-lg font-mono text-sm focus-visible:ring-primary focus-visible:border-primary transition-all duration-300 neon-border-focus disabled:opacity-60"
             data-testid="input-chat"
           />
           <Button
             type="submit"
             size="icon"
-            disabled={!input.trim() || isBusy || isBlocked}
-            className={`absolute right-2 border h-10 w-10 transition-all duration-200 ${
-              chatStatus === 'cooldown'
-                ? 'bg-orange-500/10 text-orange-400 border-orange-500/30 cursor-not-allowed'
-                : chatStatus === 'retrying'
-                ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30 cursor-wait'
-                : 'bg-primary/20 hover:bg-primary/40 text-primary border-primary/50 neon-border'
-            }`}
+            disabled={!input.trim() || isStreaming}
+            className="absolute right-2 bg-primary/20 hover:bg-primary/40 text-primary border border-primary/50 neon-border h-10 w-10 transition-all duration-200"
             data-testid="button-send-chat"
           >
-            {chatStatus === 'cooldown' ? (
-              <span className="text-[10px] font-mono font-bold tabular-nums">{cooldownSecs}</span>
-            ) : chatStatus === 'retrying' ? (
-              <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}>
-                <RefreshCw className="w-4 h-4" />
-              </motion.div>
-            ) : (
-              <Send className="w-4 h-4" />
-            )}
+            <Send className="w-4 h-4" />
           </Button>
         </form>
         <p className="text-[10px] font-mono text-muted-foreground/40 mt-2 text-center uppercase tracking-widest">
-          {chatStatus === 'cooldown'
-            ? `Neural cooling — resuming in ${cooldownSecs}s`
-            : chatStatus === 'retrying'
-            ? `Auto-retry ${retryAttempt}/${retryTotal} — exponential backoff active`
-            : settings.geminiApiKey
-            ? 'Gemini 2.0 Flash · End-to-end encrypted'
-            : 'Add Gemini API key in Settings for live AI'}
+          {settings.geminiApiKey ? 'Gemini 2.0 Flash · End-to-end encrypted' : 'Add Gemini API key in Settings for live AI'}
         </p>
       </div>
 
